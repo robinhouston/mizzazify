@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Mazify your life!</title>
+  <style type="text/css">
+    body { font-family: sans-serif; margin: 2em; width: 800px; background: #999; }
+    #content { background: white; padding: 12px 24px 48px; border-radius: 5px; text-align: center; }
+    #url { width: 500px; }
+    #picture { display: inline-block; margin: 24px auto; }
+  </style>
+</head>
+<body>
+  <div id="content">
+    <h1>Mazify anything!</h1>
+    <form id="form">
+      <span>The URL of a picture:</span> <input id="url" type="text" name="url" value="{{ url }}">
+      <input type="submit" name="x" value="Mazify">
+    </form>
+  </div>
+  <script>
+    (function() {
+      /* See if the browser is up to scratch */
+      var cannotCanvas = function() {
+        // See if we can make a canvas 2d context
+        var elem = document.createElement('canvas');
+        return !(elem.getContext && elem.getContext('2d'));
+      };
+      if (cannotCanvas() || !window.encodeURIComponent) {
+          content.removeChild(form);
+          var p = document.createElement("p");
+          p.innerHTML = "Sad face! Your web browser is not good enough for mizzazifying things. Get a better one?";
+          content.appendChild(p);
+          return;
+      }
+      
+      /* Collect all the URL parameters */
+      var params = {};
+      (function (query, re, match) {
+        while (match = re.exec(query)) {
+          params[decodeURIComponent(match[1])] = decodeURIComponent(match[2]);
+        }
+      })(window.location.search.substring(1).replace(/\+/g, "%20"), /([^&=]+)=?([^&]*)/g);
+      
+      /* Ignition sequence start */
+      var content = document.getElementById("content");
+      var form = document.getElementById("form");
+      
+      if (params.url) form.url.value = params.url;
+      
+      form.onsubmit = function() {
+        var img = document.createElement("img");
+        img.src = "/img?url=" + encodeURIComponent(form.url.value);
+        img.onload = function() {
+          var canvas = document.createElement("canvas");
+          canvas.id = "picture";
+          canvas.width = img.width;
+          canvas.height = img.height;
+          
+          
+          // We want the width and height to be odd numbers
+          if ((canvas.width % 2) == 0)  canvas.width--;
+          if ((canvas.height % 2) == 0) canvas.height--;
+          
+          var cx = canvas.getContext("2d");
+          cx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          content.appendChild(canvas);
+          
+          cx.lineWidth = 1;
+          cx.strokeStyle = cx.fillStyle = "rgba(255,255,255,0.6)";
+          
+          // Get the image data
+          var image_data = cx.getImageData(0, 0, canvas.width, canvas.height).data;
+          cx.fillStyle = "black";
+          cx.fillRect(0, 0, canvas.width, canvas.height);
+          cx.fillStyle = cx.strokeStyle;
+          
+          // Functions that act on the image data:
+          var getPixel = function(x, y) {
+            if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height)
+              return [0,0,0,0];
+            
+            var i = canvas.width * y + x;
+            return [image_data[4*i], image_data[4*i+1], image_data[4*i+2], image_data[4*i+3]];
+          };
+          var colorDifference = function(pixel1, pixel2) {
+            return Math.sqrt(
+              (pixel1[0] - pixel2[0])*(pixel1[0] - pixel2[0])
+              + (pixel1[1] - pixel2[1])*(pixel1[1] - pixel2[1])
+              + (pixel1[2] - pixel2[2])*(pixel1[2] - pixel2[2])
+            );
+          };
+          var weightedDelta = function(x, y) {
+            var px = 2*x+1
+              , py = 2*y+1
+              , c = getPixel(px, py)
+              , w0 = getPixel(px-1, py)
+              , w1 = getPixel(px-2, py)
+              , n0 = getPixel(px, py-1)
+              , n1 = getPixel(px, py-2)
+              , e0 = getPixel(px+1, py)
+              , e1 = getPixel(px+2, py)
+              , s0 = getPixel(px, py+1)
+              , s1 = getPixel(px, py+2);
+            
+            var threshold = 50;
+            var choices = [];
+            var f = function(x0, x1, dx, dy) {
+              if (   colorDifference(c,  x0) < threshold
+                  && colorDifference(x0, x1) < threshold
+                  && colorDifference(c,  x1) < threshold
+              ) {
+                choices.push([dx, dy]);
+              } else {
+                // cx.fillStyle="red";
+                // cx.fillRect(px, py, 1+2*dx, 1+2*dy);
+                // cx.fillStyle=cx.strokeStyle;
+              };
+            };
+            f(w0, w1, -1, 0);
+            f(n0, n1, 0, -1);
+            f(e0, e1, 1, 0);
+            f(s0, s1, 0, 1);
+            
+            //console.log("Choices at (%d,%d): [%s]", x, y, choices.join(", "));
+            if (choices.length == 0 || Math.random() < 0.001) choices = [[0,1],[0,-1],[1,0],[-1,0]];
+            return choices[Math.floor(Math.random() * choices.length)];
+          };
+          
+          // Maze drawing
+          var cells = {};
+          var w = Math.floor(canvas.width/2)
+            , h = Math.floor(canvas.height/2)
+            , N = w*h
+            , n = 0;
+          for (var x=0; x<w; x++) cells[[x,-1]] = cells[[x,h]] = 1;
+          for (var y=0; y<h; y++) cells[[-1,y]] = cells[[w,y]] = 1;
+          var drawPassage = function() {
+            do {
+              var x = Math.floor(Math.random() * w);
+              var y = Math.floor(Math.random() * h);
+            } while (cells[[x,y]]);
+            
+            var cellsInPath = {};
+            var path = [[x,y]];
+            cellsInPath[[x,y]] = 1;
+            
+            while (!cells[[x,y]]) {
+              delta = weightedDelta(x, y);
+              x += delta[0];
+              y += delta[1];
+              
+              var prev = cellsInPath[[x,y]];
+              if (prev) {
+                for (var i=prev; i<path.length; i++) delete cellsInPath[path[i]];
+                path.length = prev;
+              }
+              else {
+                path.push([x,y]);
+                cellsInPath[[x,y]] = path.length;
+              }
+            }
+            
+            for (var i=0; i<path.length-1; i++) {
+              cx.fillRect(2*path[i][0]+1, 2*path[i][1]+1, 1, 1);
+              cx.fillRect(path[i][0] + path[i+1][0] + 1, path[i][1] + path[i+1][1] + 1, 1, 1);
+              cells[path[i]] = 1;
+              n += 1;
+            }
+            
+            return (n < N);
+          };
+          
+          var drawMore = function() {
+            var i = 10;
+            while (drawPassage() && --i);
+            if (i == 0) setTimeout(drawMore, 0);
+            else {
+              var done = document.createElement("h1");
+              done.innerHTML = "Mazification complete!";
+              content.appendChild(done);
+            }
+          };
+          setTimeout(drawMore, 0);
+        };
+        
+        return false;
+      };
+      
+      if (params.go) form.onsubmit();
+    })();
+  </script>
+</body>
+</html>
